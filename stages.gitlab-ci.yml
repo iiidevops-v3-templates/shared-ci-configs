@@ -1,0 +1,9 @@
+# We defined stages here, so we can dynamic change the flow in future.
+
+stages:
+  - initial
+  - scan
+  - build
+  - deploy
+  - test
+  - userjobs

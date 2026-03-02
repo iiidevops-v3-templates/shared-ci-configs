@@ -1,0 +1,73 @@
+.initial-common:
+  stage: initial
+  image:
+    name: ubuntu:22.04
+  variables:
+    GIT_DEPTH: 0
+  before_script:
+    - apt-get update
+    - apt-get install -y curl git-extras bsdmainutils git jq
+
+Initial::Commit Counts:
+  extends:
+    - .initial-common
+  script:
+    - git-summary
+    - git-count
+    - total=$(git rev-list --count --all)
+    - default_branch=$(git rev-list --count origin/${CI_DEFAULT_BRANCH})
+    - |
+      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commit-counts" \
+        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"pipeline_id\": ${CI_PIPELINE_ID}, \"total\": ${total}, \"default_branch\": ${default_branch}}"
+    - echo "Get commits by date"
+    - |
+      git log --format='%ad' --date=short | sort | uniq -c | \
+        awk '{print "{\"date\":\"" $2 "\",\"count\":" $1 "}"}' | \
+        jq -s '.' > commits_by_date.json
+    - |
+      jq -n --argjson data "$(cat commits_by_date.json)" --argjson pid "${CI_PIPELINE_ID}" \
+        '{"pipeline_id": $pid, "data": $data}' | \
+      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commits-by-date" \
+        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d @-
+
+Initial::Languages:
+  stage: initial
+  image:
+    name: golang:1.23
+  before_script:
+    - apt-get update && apt-get install -y curl jq
+  script:
+    - go install github.com/go-enry/go-enry/v2/cmd/enry@latest
+    - enry > enry_report.txt
+    - cat enry_report.txt
+    - enry_data=$(cat enry_report.txt)
+    - |
+      jq -n --arg data "$enry_data" --argjson pid "${CI_PIPELINE_ID}" \
+        '{"pipeline_id": $pid, "data": $data}' | \
+      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/languages" \
+        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d @-
+
+Initial::CLOC:
+  stage: initial
+  image:
+    name: aldanial/cloc:2.08
+    entrypoint: [ "" ]
+  before_script:
+    - apt-get update && apt-get install -y curl jq
+  script:
+    - /usr/src/cloc .
+    - /usr/src/cloc . --json > cloc_report.json
+    - cloc_data=$(cat cloc_report.json)
+    - |
+      jq -n --argjson data "$cloc_data" --argjson pid "${CI_PIPELINE_ID}" \
+        '{"pipeline_id": $pid, "data": ($data | tostring)}' | \
+      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/cloc" \
+        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d @-
