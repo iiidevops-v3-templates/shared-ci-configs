@@ -1,16 +1,17 @@
 .initial-common:
   stage: initial
-  image:
-    name: ubuntu:22.04
+
   variables:
     GIT_DEPTH: 0
-  before_script:
-    - apt-get update
-    - apt-get install -y curl git-extras bsdmainutils git jq
 
 Initial::Commit Counts:
   extends:
     - .initial-common
+  image:
+    name: debian:stable-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y curl git-extras bsdmainutils git jq
   script:
     - git-summary
     - git-count
