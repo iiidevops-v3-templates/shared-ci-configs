@@ -9,66 +9,114 @@ Initial::Commit Counts:
     - .initial-common
   image:
     name: debian:stable-slim
+  artifacts:
+    reports:
+      dotenv: commits.env
+    paths:
+      - commits_by_date.json
   before_script:
     - apt-get update
-    - apt-get install -y curl git-extras bsdmainutils git jq
+    - apt-get install -y git-extras bsdmainutils git jq
   script:
     - git-summary
     - git-count
-    - total=$(git rev-list --count --all)
-    - default_branch=$(git rev-list --count origin/${CI_DEFAULT_BRANCH})
+    - echo "TOTAL_COUNTS=$(git rev-list --count --all)" >> commits.env
+    - echo "DEFAULT_BRANCH_COUNTS=$(git rev-list --count origin/${CI_DEFAULT_BRANCH})" >> commits.env
     - |
-      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commit-counts" \
-        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "{\"pipeline_id\": ${CI_PIPELINE_ID}, \"total\": ${total}, \"default_branch\": ${default_branch}}"
-    - echo "Get commits by date"
-    - |
+      echo "Get commits by date"
       git log --format='%ad' --date=short | sort | uniq -c | \
         awk '{print "{\"date\":\"" $2 "\",\"count\":" $1 "}"}' | \
         jq -s '.' > commits_by_date.json
-    - |
-      jq -n --argjson data "$(cat commits_by_date.json)" --argjson pid "${CI_PIPELINE_ID}" \
-        '{"pipeline_id": $pid, "data": $data}' | \
-      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commits-by-date" \
-        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d @-
 
 Initial::Languages:
   stage: initial
   image:
     name: golang:1.23
-  before_script:
-    - apt-get update && apt-get install -y curl jq
+  artifacts:
+    paths:
+      - enry_report.txt
   script:
     - go install github.com/go-enry/go-enry/v2/cmd/enry@latest
     - enry > enry_report.txt
     - cat enry_report.txt
-    - enry_data=$(cat enry_report.txt)
-    - |
-      jq -n --arg data "$enry_data" --argjson pid "${CI_PIPELINE_ID}" \
-        '{"pipeline_id": $pid, "data": $data}' | \
-      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/languages" \
-        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d @-
 
 Initial::CLOC:
   stage: initial
   image:
     name: aldanial/cloc:2.08
     entrypoint: [ "" ]
-  before_script:
-    - apt-get update && apt-get install -y curl jq
+  artifacts:
+    paths:
+      - cloc_report.json
   script:
-    - /usr/src/cloc .
-    - /usr/src/cloc . --json > cloc_report.json
-    - cloc_data=$(cat cloc_report.json)
+    - /usr/src/cloc . --timeout 0 --no-autogen
+    - /usr/src/cloc . --timeout 0 --no-autogen --json > cloc_report.json
+
+Initial::Report:
+  stage: initial
+  image:
+    name: alpine:latest
+  variables:
+    FILE_COMMIT_BY_DATE: "commits_by_date.json"
+    FILE_ENRY_REPORT: "enry_report.txt"
+    FILE_CLOC_REPORT: "cloc_report.json"
+    GIT_STRATEGY: none # This job does not need to clone the repository
+  needs:
+    - Initial::Commit Counts
+    - Initial::Languages
+    - Initial::CLOC
+  before_script:
+    - apk add --no-cache --update curl jq
+  script:
     - |
-      jq -n --argjson data "$cloc_data" --argjson pid "${CI_PIPELINE_ID}" \
-        '{"pipeline_id": $pid, "data": ($data | tostring)}' | \
-      curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/cloc" \
-        -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d @-
+      if [ -z "$TOTAL_COUNTS" ] || [ -z "$DEFAULT_BRANCH_COUNTS" ]; then
+        echo "Error: Missing commit counts data. Cannot send report."
+        exit 1
+      else
+        echo "Sending commit counts report: total=$TOTAL_COUNTS, default branch=$DEFAULT_BRANCH_COUNTS"
+        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commit-counts" \
+          -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d "{\"pipeline_id\": ${CI_PIPELINE_ID}, \"total\": ${TOTAL_COUNTS}, \"default_branch\": ${DEFAULT_BRANCH_COUNTS}}"
+      fi  
+    - |
+      if [ -f "$FILE_COMMIT_BY_DATE" ]; then
+        echo "Sending commits by date report."
+        jq -n --argjson data "$(cat $FILE_COMMIT_BY_DATE)" --argjson pid "${CI_PIPELINE_ID}" \
+          '{"pipeline_id": $pid, "data": $data}' | \
+        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commits-by-date" \
+          -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @-
+      else
+        echo "Error: Commits by date report not found."
+        exit 1
+      fi
+
+      if [ -f "$FILE_ENRY_REPORT" ]; then
+        echo "Sending enry report."
+        enry_data=$(cat $FILE_ENRY_REPORT)
+        jq -n --arg data "$enry_data" --argjson pid "${CI_PIPELINE_ID}" \
+          '{"pipeline_id": $pid, "data": $data}' | \
+        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/languages" \
+          -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @-
+      else
+        echo "Error: Enry report not found."
+        exit 1
+      fi
+
+      if [ -f "$FILE_CLOC_REPORT" ]; then
+        echo "Sending cloc report."
+        cloc_data=$(cat $FILE_CLOC_REPORT)
+        jq -n --argjson data "$cloc_data" --argjson pid "${CI_PIPELINE_ID}" \
+          '{"pipeline_id": $pid, "data": ($data | tostring)}' | \
+        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/cloc" \
+          -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d @-
+      else
+        echo "Error: CLOC report not found."
+        exit 1
+      fi
