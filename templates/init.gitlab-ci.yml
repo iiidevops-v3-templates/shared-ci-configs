@@ -74,7 +74,7 @@ Initial::Report:
         exit 1
       else
         echo "Sending commit counts report: total=$TOTAL_COUNTS, default branch=$DEFAULT_BRANCH_COUNTS"
-        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commit-counts" \
+        curl -fsSL -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commit-counts" \
           -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
           -H "Content-Type: application/json" \
           -d "{\"pipeline_id\": ${CI_PIPELINE_ID}, \"total\": ${TOTAL_COUNTS}, \"default_branch\": ${DEFAULT_BRANCH_COUNTS}}"
@@ -84,7 +84,7 @@ Initial::Report:
         echo "Sending commits by date report."
         jq -n --argjson data "$(cat $FILE_COMMIT_BY_DATE)" --argjson pid "${CI_PIPELINE_ID}" \
           '{"pipeline_id": $pid, "data": $data}' | \
-        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commits-by-date" \
+        curl -fsSL -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/commits-by-date" \
           -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @-
@@ -98,7 +98,7 @@ Initial::Report:
         enry_data=$(cat $FILE_ENRY_REPORT)
         jq -n --arg data "$enry_data" --argjson pid "${CI_PIPELINE_ID}" \
           '{"pipeline_id": $pid, "data": $data}' | \
-        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/languages" \
+        curl -fsSL -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/languages" \
           -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @-
@@ -112,7 +112,7 @@ Initial::Report:
         cloc_data=$(cat $FILE_CLOC_REPORT)
         jq -n --argjson data "$cloc_data" --argjson pid "${CI_PIPELINE_ID}" \
           '{"pipeline_id": $pid, "data": ($data | tostring)}' | \
-        curl -fs -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/cloc" \
+        curl -fsSL -X POST "${DEVOPS_API}/v3/gitlab/devops-statics/cloc" \
           -H "Authorization: Bearer ${DEVOPS_TOKEN}" \
           -H "Content-Type: application/json" \
           -d @-
