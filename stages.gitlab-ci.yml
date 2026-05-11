@@ -7,3 +7,10 @@ stages:
   - deploy
   - test
   - userjobs
+
+workflow:
+  # Rule will replaced if project have their customized workflow, otherwise it will be used as default.
+  rules:
+    - if: $GITLAB_USER_LOGIN == "root"
+      when: never
+    - when: always # Always run pipeline for other cases
